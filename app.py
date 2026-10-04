@@ -72,19 +72,20 @@ async def main(message: cl.Message):
     msg = cl.Message(content="")
 
     try:
+        # Note: with stream=True the request is lazy — errors surface
+        # while iterating, so the whole loop lives inside the try.
         stream = ollama.chat(model=MODEL, messages=interaction, stream=True)
+        reply_parts: list[str] = []
+        for chunk in stream:
+            token = chunk.message.content or ""
+            reply_parts.append(token)
+            await msg.stream_token(token)
     except Exception:
         # Don't poison the history with the failed turn; surface a fix-it hint.
         interaction.pop()
         await msg.stream_token(OLLAMA_DOWN_HINT)
         await msg.send()
         return
-
-    reply_parts: list[str] = []
-    for chunk in stream:
-        token = chunk.message.content or ""
-        reply_parts.append(token)
-        await msg.stream_token(token)
 
     interaction.append({"role": "assistant", "content": "".join(reply_parts)})
     await msg.send()
