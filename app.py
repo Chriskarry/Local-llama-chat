@@ -5,6 +5,8 @@ Powered by Llama 3.2 Vision served through Ollama. Chat with text,
 attach images and ask questions about them. No API keys, no cloud,
 your data never leaves your machine.
 
+Replies stream token-by-token as the model generates them.
+
 Setup:
     1. Install Ollama: https://ollama.com  (or `curl -fsSL https://ollama.com/install.sh | sh`)
     2. Pull the model:  ollama pull llama3.2-vision
@@ -56,41 +58,33 @@ async def start_chat():
     await msg.send()
 
 
-@cl.step(type="tool")
-async def generate_reply(user_message: str, image_paths: list[str] | None = None):
-    """Send the conversation (plus optional images) to the local model."""
-    interaction = cl.user_session.get("interaction")
+@cl.on_message
+async def main(message: cl.Message):
+    """Handle an incoming message, streaming the reply as it's generated."""
+    images = [f for f in message.elements if "image" in f.mime]
 
-    user_turn: dict = {"role": "user", "content": user_message}
-    if image_paths:
-        user_turn["images"] = image_paths
+    interaction = cl.user_session.get("interaction")
+    user_turn: dict = {"role": "user", "content": message.content}
+    if images:
+        user_turn["images"] = [f.path for f in images]
     interaction.append(user_turn)
 
+    msg = cl.Message(content="")
+
     try:
-        response = ollama.chat(model=MODEL, messages=interaction)
+        stream = ollama.chat(model=MODEL, messages=interaction, stream=True)
     except Exception:
         # Don't poison the history with the failed turn; surface a fix-it hint.
         interaction.pop()
-        return None
-
-    interaction.append({"role": "assistant", "content": response.message.content})
-    return response
-
-
-@cl.on_message
-async def main(message: cl.Message):
-    """Handle an incoming chat message, with optional image attachments."""
-    images = [f for f in message.elements if "image" in f.mime]
-
-    if images:
-        tool_res = await generate_reply(message.content, [f.path for f in images])
-    else:
-        tool_res = await generate_reply(message.content)
-
-    msg = cl.Message(content="")
-    if tool_res is None:
         await msg.stream_token(OLLAMA_DOWN_HINT)
-    else:
-        for token in tool_res.message.content:
-            await msg.stream_token(token)
+        await msg.send()
+        return
+
+    reply_parts: list[str] = []
+    for chunk in stream:
+        token = chunk.message.content or ""
+        reply_parts.append(token)
+        await msg.stream_token(token)
+
+    interaction.append({"role": "assistant", "content": "".join(reply_parts)})
     await msg.send()
