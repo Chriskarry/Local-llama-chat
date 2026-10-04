@@ -80,7 +80,10 @@ async def main(message: cl.Message):
             token = chunk.message.content or ""
             reply_parts.append(token)
             await msg.stream_token(token)
-    except Exception:
+    except Exception as e:
+        # Log the real error to the terminal for debugging; show the
+        # friendly hint in the chat UI.
+        print(f"[local-llama-chat] Ollama call failed: {type(e).__name__}: {e}")
         # Don't poison the history with the failed turn; surface a fix-it hint.
         interaction.pop()
         await msg.stream_token(OLLAMA_DOWN_HINT)
